@@ -47,6 +47,28 @@ bool TextModel::Save(const std::string& str)
 	return false;
 }
 
+bool TextModel::Replace(const ReplacePara& para)
+{
+	bool bReplaceAll = para.nPos == -1 ? true : false;
+	bool bSuc = false;
+	for (int found = 1; found;) {
+		int pos = para.nPos;
+		found = m_spBuffer->search_forward(pos, para.strFind.c_str(), &pos);
+
+		if (found) {
+			// Found a match; update the position and replace text...
+			m_spBuffer->select(pos, pos + (int)strlen(para.strFind.c_str()));
+			m_spBuffer->remove_selection();
+			m_spBuffer->insert(pos, para.strReplace.c_str());
+			bSuc = true;
+		}
+		if (!bReplaceAll)
+			break;
+	}
+	if(bSuc)
+		Fire(PROPID_TEXT);
+	return true;
+}
 ////////////////////////////////////////////////////////////////////////////////
 }
 ////////////////////////////////////////////////////////////////////////////////
