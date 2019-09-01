@@ -84,6 +84,65 @@ void FsPathHelper::ToPlatform(char* szBuffer) throw()
 #endif
 }
 
+const char* FsPathHelper::GetHomeDirectory() throw()
+{
+#ifdef WIN32
+	return ::getenv("HOMEPATH");
+#else
+	return ::getenv("HOME");
+#endif
+}
+
+//stream
+
+bool StreamHelper::CheckBOM_UTF8(std::istream& stm)
+{
+	bool bRet = false;
+	uint8_t buf[3];
+	stm.read((char*)buf, 3);
+	std::streamsize n = stm.gcount();
+	int32_t iBack = 0;
+	if( n == 3 ) {
+		if( buf[0] != 0xEF || buf[1] != 0xBB || buf[2] != 0xBF )
+			iBack = 3;
+		else
+			bRet = true;
+	}
+	else {
+		iBack = (int32_t)n;
+	}
+	if( iBack != 0 )
+		stm.seekg(-iBack, std::ios::cur);
+	return bRet;
+}
+
+//framework
+
+// Property Trigger
+
+PropertyTrigger::PropertyTrigger() noexcept
+{
+}
+PropertyTrigger::~PropertyTrigger() noexcept
+{
+}
+
+void PropertyTrigger::ClearNotifications() noexcept
+{
+	m_vecPN.clear();
+}
+
+void PropertyTrigger::AddNotification(PropertyNotification&& pn)
+{
+	m_vecPN.push_back(std::move(pn));
+}
+
+void PropertyTrigger::Fire(uint32_t uID)
+{
+	for( auto& fn : m_vecPN )
+		fn(uID);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 }
 ////////////////////////////////////////////////////////////////////////////////

@@ -9,11 +9,13 @@
 
 #include <cstdint>
 #include <cassert>
+#include <cstring>
 
 #include <memory>
 #include <vector>
 #include <stack>
 #include <map>
+#include <set>
 
 #include <string>
 #include <codecvt>
@@ -24,6 +26,17 @@
 #include <fstream>
 #include <iostream>
 
+#include <functional>
+#include <tuple>
+#include <limits>
+
+#include <thread>
+#include <chrono>
+
+//C++17
+#include <filesystem>
+#include <any>
+
 ////////////////////////////////////////////////////////////////////////////////
 
 // types
@@ -31,6 +44,96 @@
 ////////////////////////////////////////////////////////////////////////////////
 namespace CSL {
 ////////////////////////////////////////////////////////////////////////////////
+
+//pointer
+
+template <typename T>
+class RefPtr
+{
+public:
+	RefPtr() noexcept : m_p(nullptr)
+	{
+	}
+	explicit RefPtr(T& t) noexcept : m_p(&t)
+	{
+	}
+	explicit RefPtr(T* p) noexcept : m_p(p)
+	{
+	}
+	RefPtr(const RefPtr& src) noexcept : m_p(src.m_p)
+	{
+	}
+	~RefPtr() noexcept
+	{
+	}
+
+	RefPtr& operator=(const RefPtr& src) noexcept
+	{
+		m_p = src.m_p;
+		return *this;
+	}
+
+	bool IsNull() const noexcept
+	{
+		return m_p == nullptr;
+	}
+
+	const T* Get() const noexcept
+	{
+		return m_p;
+	}
+	T* Get() noexcept
+	{
+		return m_p;
+	}
+	const T* operator->() const noexcept
+	{
+		return Get();
+	}
+	T* operator->() noexcept
+	{
+		return Get();
+	}
+	const T& operator*() const noexcept
+	{
+		assert( !IsNull() );
+		return *Get();
+	}
+	T& operator*() noexcept
+	{
+		assert( !IsNull() );
+		return *Get();
+	}
+
+private:
+	T* m_p;
+};
+
+//operators
+
+class SafeOperators
+{
+public:
+	//T : unsigned integer types
+	template <typename T>
+	static T AddThrow(T left, T right)
+	{
+		T r = left + right;
+		if( r < left )
+			throw std::overflow_error("");
+		return r;
+	}
+	template <typename T>
+	static T MultiplyThrow(T left, T right)
+	{
+		//avoid divide 0
+		if( left == 0 )
+			return 0;
+		if( std::numeric_limits<T>::max() / left < right )
+			throw std::overflow_error("");
+		return left * right;
+	}
+};
 
 //code convert
 
@@ -55,6 +158,16 @@ class FsPathHelper
 {
 public:
 	static void ToPlatform(char* szBuffer) throw();
+	static const char* GetHomeDirectory() throw();
+};
+
+//stream
+
+class StreamHelper
+{
+public:
+	//return: true -- has UTF8 BOM
+	static bool CheckBOM_UTF8(std::istream& stm);
 };
 
 //test
@@ -105,73 +218,37 @@ public:
 
 //framework
 
+/*
 class ParameterBase
 {
 public:
 	uint32_t m_uType;
 };
+*/
 
-class ICommand
+// Command
+//   [](std::any&& param)->bool
+typedef std::function<bool(std::any&&)>  CommandFunc;
+
+// Property Notification
+//   [](uint32_t)
+typedef std::function<void(uint32_t)>  PropertyNotification;
+
+class PropertyTrigger
 {
 public:
-	virtual void SetParameter(const std::shared_ptr<ParameterBase>& param) throw() = 0;
-	virtual bool Exec() = 0;
-};
+	PropertyTrigger() noexcept;
+	PropertyTrigger(const PropertyTrigger&) = delete;
+	PropertyTrigger& operator=(const PropertyTrigger&) = delete;
+	~PropertyTrigger() noexcept;
 
-// Notifications
+	void ClearNotifications() noexcept;
+	void AddNotification(PropertyNotification&& pn);
 
-template <class T>
-class NotificationImpl
-{
-public:
-	void Clear() throw()
-	{
-		m_vec.clear();
-	}
-	void AddNotification(const std::shared_ptr<T>& sp)
-	{
-		m_vec.push_back(sp);
-	}
-	void RemoveNotification(const std::shared_ptr<T>& sp) throw()
-	{
-		auto iter(m_vec.begin());
-		for( ; iter != m_vec.end(); ++ iter ) {
-			if( (*iter).get() == sp.get() ) {
-				m_vec.erase(iter);
-				return ;
-			}
-		}
-	}
+	void Fire(uint32_t uID);
 
-protected:
-	std::vector<std::shared_ptr<T>> m_vec;
-};
-
-class IPropertyNotification
-{
-public:
-	virtual void OnPropertyChanged(uint32_t uPropertyID) = 0;
-};
-
-template <class T>
-class Proxy_PropertyNotification : public NotificationImpl<IPropertyNotification>
-{
-public:
-	void AddPropertyNotification(const std::shared_ptr<IPropertyNotification>& sp)
-	{
-		AddNotification(sp);
-	}
-	void RemovePropertyNotification(const std::shared_ptr<IPropertyNotification>& sp) throw()
-	{
-		RemoveNotification(sp);
-	}
-	void Fire_OnPropertyChanged(uint32_t uID)
-	{
-		auto iter(m_vec.begin());
-		for( ; iter != m_vec.end(); ++ iter ) {
-			(*iter)->OnPropertyChanged(uID);
-		}
-	}
+private:
+	std::vector<PropertyNotification> m_vecPN;
 };
 
 // state machine
@@ -179,12 +256,16 @@ public:
 class IStateBase
 {
 public:
-	virtual int Process(uint32_t uEvent, const std::shared_ptr<ParameterBase>& param) = 0;
+	//virtual int32_t Process(uint32_t uEvent, const std::shared_ptr<ParameterBase>& param) = 0;
+	virtual int32_t Process(uint32_t uEvent, const std::any& param) = 0;
 };
 
 class StateManager
 {
 public:
+	StateManager(const StateManager&) = delete;
+	StateManager& operator=(const StateManager&) = delete;
+
 	void Add(int32_t iState, const std::shared_ptr<IStateBase>& spState)
 	{
 		m_map.insert(std::pair<int32_t, std::shared_ptr<IStateBase>>(iState, spState));
@@ -193,7 +274,7 @@ public:
 	{
 		m_iCurrentState = iStartState;
 	}
-	void Process(uint32_t uEvent, const std::shared_ptr<ParameterBase>& param)
+	void Process(uint32_t uEvent, const std::any& param)
 	{
 		auto iter(m_map.find(m_iCurrentState));
 		if( iter != m_map.end() )
